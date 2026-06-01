@@ -49,7 +49,7 @@ jobs:
       - name: Bundle JS for release
         run: |
           mkdir -p android/app/src/main/assets
-          npx react-native bundle \
+          npx @react-native-community/cli bundle \
             --platform android \
             --dev false \
             --entry-file index.ts \
