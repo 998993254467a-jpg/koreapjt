@@ -1,6 +1,6 @@
 package com.app.cryptoscalpingmobile
 
-import com.app.cryptoscalpingmobile.R
+import com.jtpower.R
 import android.os.Build
 import android.os.Bundle
 
