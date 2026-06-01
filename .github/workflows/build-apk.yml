@@ -46,15 +46,26 @@ jobs:
           key: gradle-${{ hashFiles('android/**/*.gradle*') }}
           restore-keys: gradle-
 
-      - name: Build APK
+      - name: Bundle JS for release
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --entry-file index.ts \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+
+      - name: Build Release APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
+          ./gradlew assembleRelease --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: jtpower-binance-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: jtpower-binance-release
+          path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7
