@@ -47,6 +47,9 @@ jobs:
           restore-keys: gradle-
 
       - name: Bundle JS for release
+        env:
+          EXPO_ROUTER_DISABLE_RN_NAVIGATION_CHECK: '1'
+          NODE_ENV: production
         run: |
           mkdir -p android/app/src/main/assets
           npx @react-native-community/cli bundle \
@@ -57,13 +60,14 @@ jobs:
             --assets-dest android/app/src/main/res
 
       - name: Build Release APK
+        env:
+          EXPO_ROUTER_DISABLE_RN_NAVIGATION_CHECK: '1'
+          NODE_ENV: production
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon \
-            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m" \
-            -PbundleInRelease=false \
-            -Preact.bundleInDebug=false
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
