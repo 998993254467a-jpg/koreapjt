@@ -2,7 +2,7 @@
   "expo": {
     "name": "JT POWER",
     "slug": "crypto-scalping-mobile",
-    "version": "1.0.53",
+    "version": "1.0.54",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "manuscryptoscalpingmobile",
@@ -48,7 +48,7 @@
           ]
         }
       ],
-      "versionCode": 10053
+      "versionCode": 10054
     },
     "web": {
       "bundler": "metro",
