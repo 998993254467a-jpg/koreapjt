@@ -1,9 +1,9 @@
 /**
  * trading-service.ts
- * Binance FAPI (Futures) API 클라이언트 — React Native (Hermes) 호환
+ * Bybit V5 (Linear Futures) API 클라이언트 — React Native (Hermes) 호환
  *
  * - Cross 마진 모드, 시장가(Market) 주문
- * - 레버리지: 심볼별 Binance 최대치 자동 조회
+ * - 레버리지: 심볼별 Bybit 최대치 자동 조회
  * - 주문 금액: 가용잔고(availableBalance) 3% 미만
  * - 전체 미체결 주문 취소 API
  * - 접속 오류 시 3회 재시도 (exponential backoff)
@@ -25,9 +25,9 @@ try {
   };
 }
 
-const BINANCE_MAINNET = 'https://fapi.binance.com';
-const BINANCE_TESTNET = 'https://testnet.binancefuture.com';
-const CREDS_KEY = 'binance_creds_v1';
+const BYBIT_MAINNET = 'https://api.bybit.com';
+const BYBIT_TESTNET = 'https://api-testnet.bybit.com';
+const CREDS_KEY = 'bybit_creds_v1';
 
 // ─── 타입 ────────────────────────────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ export interface PositionInfo {
   side: 'Buy' | 'Sell';
   size: string;
   entryPrice: string;
-  avgPrice?: string;          // 평균단가
+  avgPrice?: string;
   unrealisedPnl: string;
   leverage: string;
   positionValue: string;
@@ -163,95 +163,88 @@ function sha256Pure(data: Uint8Array): Uint8Array {
   return out;
 }
 
-function hmacSha256(message: string, secret: string): string {
-  const enc = new TextEncoder();
-  let key = enc.encode(secret);
-  if (key.length > 64) key = new Uint8Array(sha256Pure(key).buffer as ArrayBuffer);
-  const ipad = new Uint8Array(64);
-  const opad = new Uint8Array(64);
-  for (let i = 0; i < 64; i++) {
-    ipad[i] = (key[i] ?? 0) ^ 0x36;
-    opad[i] = (key[i] ?? 0) ^ 0x5c;
-  }
-  const msg = enc.encode(message);
-  const inner = new Uint8Array(64 + msg.length);
-  inner.set(ipad); inner.set(msg, 64);
+function hmacSha256(message: string, key: string): string {
+  const enc = (s: string) => {
+    const bytes: number[] = [];
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c < 0x80) bytes.push(c);
+      else if (c < 0x800) { bytes.push(0xc0|(c>>6)); bytes.push(0x80|(c&0x3f)); }
+      else { bytes.push(0xe0|(c>>12)); bytes.push(0x80|((c>>6)&0x3f)); bytes.push(0x80|(c&0x3f)); }
+    }
+    return new Uint8Array(bytes);
+  };
+  const BLOCK = 64;
+  let keyBytes = enc(key);
+  if (keyBytes.length > BLOCK) keyBytes = sha256Pure(keyBytes);
+  const kPad = new Uint8Array(BLOCK);
+  kPad.set(keyBytes);
+  const iKey = kPad.map(b => b ^ 0x36);
+  const oKey = kPad.map(b => b ^ 0x5c);
+  const msgBytes = enc(message);
+  const inner = new Uint8Array(BLOCK + msgBytes.length);
+  inner.set(iKey); inner.set(msgBytes, BLOCK);
   const innerHash = sha256Pure(inner);
-  const outer = new Uint8Array(64 + 32);
-  outer.set(opad); outer.set(innerHash, 64);
+  const outer = new Uint8Array(BLOCK + 32);
+  outer.set(oKey); outer.set(innerHash, BLOCK);
   const result = sha256Pure(outer);
   return Array.from(result).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// ─── 서버 시간 동기화 ─────────────────────────────────────────────────────────
+// ─── 공통 서명 요청 (Bybit V5 방식) ─────────────────────────────────────────
 
-let _timeDiff = 0;
-
-export async function syncServerTime(isTestnet: boolean): Promise<void> {
-  try {
-    const base = isTestnet ? BINANCE_TESTNET : BINANCE_MAINNET;
-    const res = await fetchWithTimeout(`${base}/fapi/v1/time`, 8000);
-    const rawText = await res.text();
-    let data: { serverTime: number };
-    try {
-      data = JSON.parse(rawText) as { serverTime: number };
-    } catch {
-      return;
-    }
-    if (data.serverTime) {
-      _timeDiff = data.serverTime - Date.now();
-    }
-  } catch { _timeDiff = 0; }
-}
-
-function now(): string {
-  return (Date.now() + _timeDiff).toString();
-}
-
-// ─── 공통 서명 요청 (접속 오류 3회 재시도) ───────────────────────────────────
-
-export async function binanceRequest(
+export async function bybitRequest(
   creds: ApiCredentials,
   method: 'GET' | 'POST' | 'DELETE',
   path: string,
   params: Record<string, unknown> = {},
   retries = 3,
 ): Promise<unknown> {
-  const base = creds.isTestnet ? BINANCE_TESTNET : BINANCE_MAINNET;
+  const base = creds.isTestnet ? BYBIT_TESTNET : BYBIT_MAINNET;
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const ts = now();
+      const timestamp = Date.now().toString();
       const recvWindow = '10000';
+      const apiKey = creds.apiKey;
 
-      const allParams: Record<string, string> = {
-        ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
-        timestamp: ts,
-        recvWindow,
-      };
-
-      const qs = new URLSearchParams(allParams).toString();
-      const signature = hmacSha256(qs, creds.secretKey);
-      const signedQs = `${qs}&signature=${signature}`;
-
+      let signPayload: string;
       let url: string;
       let fetchOptions: RequestInit;
 
       if (method === 'GET' || method === 'DELETE') {
-        url = `${base}${path}?${signedQs}`;
+        const qs = new URLSearchParams(
+          Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)]))
+        ).toString();
+        signPayload = timestamp + apiKey + recvWindow + qs;
+        const signature = hmacSha256(signPayload, creds.secretKey);
+        url = `${base}${path}${qs ? '?' + qs : ''}`;
         fetchOptions = {
           method,
-          headers: { 'X-MBX-APIKEY': creds.apiKey },
+          headers: {
+            'X-BAPI-API-KEY': apiKey,
+            'X-BAPI-SIGN': signature,
+            'X-BAPI-SIGN-TYPE': '2',
+            'X-BAPI-TIMESTAMP': timestamp,
+            'X-BAPI-RECV-WINDOW': recvWindow,
+          },
         };
       } else {
+        const body = JSON.stringify(params);
+        signPayload = timestamp + apiKey + recvWindow + body;
+        const signature = hmacSha256(signPayload, creds.secretKey);
         url = `${base}${path}`;
         fetchOptions = {
           method: 'POST',
           headers: {
-            'X-MBX-APIKEY': creds.apiKey,
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-BAPI-API-KEY': apiKey,
+            'X-BAPI-SIGN': signature,
+            'X-BAPI-SIGN-TYPE': '2',
+            'X-BAPI-TIMESTAMP': timestamp,
+            'X-BAPI-RECV-WINDOW': recvWindow,
+            'Content-Type': 'application/json',
           },
-          body: signedQs,
+          body,
         };
       }
 
@@ -271,7 +264,6 @@ export async function binanceRequest(
       }
 
       const rawText = await res.text();
-
       let data: unknown;
       try {
         data = JSON.parse(rawText);
@@ -279,36 +271,35 @@ export async function binanceRequest(
         throw new Error(`응답 파싱 오류 (${res.status}): ${rawText.slice(0, 100)}`);
       }
 
-      // Binance 오류 코드 처리
-      if (typeof data === 'object' && data !== null && 'code' in data) {
-        const errData = data as { code: number; msg: string };
-        if (errData.code < 0) {
+      // Bybit 오류 코드 처리
+      if (typeof data === 'object' && data !== null && 'retCode' in data) {
+        const d = data as { retCode: number; retMsg: string; result: unknown };
+        if (d.retCode !== 0) {
           const guide: Record<number, string> = {
-            // 인증/권한 오류
-            '-1100': '\nAPI 파라미터 오류를 확인하세요.',
-            '-1121': '\n심볼이 유효하지 않습니다.',
-            '-2014': '\nAPI 키가 잘못되었습니다.',
-            '-2015': '\nAPI 키 또는 Secret Key를 확인하세요.',
-            '-1003': '\n요청 한도 초과. 잠시 후 재시도하세요.',
-            // 잔고/주문 오류
-            '-2019': '\n잔고가 부족합니다.',
-            '-4046': '\n이미 Cross 마진 모드입니다. (정상)',
-            '-4028': '\n레버리지가 이미 동일하게 설정되어 있습니다. (정상)',
+            10001: '\n파라미터 오류를 확인하세요.',
+            10003: '\nAPI 키가 잘못되었습니다.',
+            10004: '\n서명이 잘못되었습니다. Secret Key를 확인하세요.',
+            10006: '\n요청 한도 초과. 잠시 후 재시도하세요.',
+            110001: '\n심볼이 유효하지 않습니다.',
+            110007: '\n잔고가 부족합니다.',
+            110043: '\n레버리지가 이미 동일하게 설정되어 있습니다. (정상)',
+            110026: '\n이미 Cross 마진 모드입니다. (정상)',
           };
-          const codeStr = String(errData.code);
-          throw new Error(`Binance 오류 (${errData.code}): ${errData.msg}${guide[errData.code] ?? guide[codeStr as unknown as number] ?? ''}`);
+          // 정상으로 처리할 코드
+          if (d.retCode === 110043 || d.retCode === 110026) {
+            return d.result;
+          }
+          throw new Error(`Bybit 오류 (${d.retCode}): ${d.retMsg}${guide[d.retCode] ?? ''}`);
         }
+        return d.result;
       }
 
       return data;
     } catch (e) {
       if (attempt < retries - 1) {
         const msg = e instanceof Error ? e.message : String(e);
-        // 재시도 불필요한 오류는 즉시 throw
-        const noRetryPatterns = ['-1121', '-2014', '-2015', '-4046', '-4028'];
-        if (noRetryPatterns.some(code => msg.includes(code))) {
-          throw e;
-        }
+        const noRetryPatterns = ['10003', '10004', '110001'];
+        if (noRetryPatterns.some(code => msg.includes(code))) throw e;
         await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
         continue;
       }
@@ -318,8 +309,8 @@ export async function binanceRequest(
   throw new Error('요청 실패 (재시도 초과)');
 }
 
-// Bybit 호환 alias (server-bot-engine 호환)
-export const bybitRequest = binanceRequest;
+// 하위 호환 alias
+export const binanceRequest = bybitRequest;
 
 // ─── 자격증명 관리 ────────────────────────────────────────────────────────────
 
@@ -337,7 +328,7 @@ export async function deleteCredentials(): Promise<void> {
   await AsyncStorage.removeItem(CREDS_KEY);
 }
 
-// ─── 심볼 메타 캐시 ──────────────────────────────────────────────────────────
+// ─── 심볼 메타 캐시 (Bybit V5) ───────────────────────────────────────────────
 
 export async function loadAllSymbolMeta(isTestnet = false): Promise<Map<string, SymbolMeta>> {
   const now_ms = Date.now();
@@ -345,44 +336,67 @@ export async function loadAllSymbolMeta(isTestnet = false): Promise<Map<string, 
     return _symbolMetaCache;
   }
 
-  const base = isTestnet ? BINANCE_TESTNET : BINANCE_MAINNET;
+  const base = isTestnet ? BYBIT_TESTNET : BYBIT_MAINNET;
   const map = new Map<string, SymbolMeta>();
 
   try {
-    const res = await fetchWithTimeout(`${base}/fapi/v1/exchangeInfo`, 15000);
+    const res = await fetchWithTimeout(
+      `${base}/v5/market/instruments-info?category=linear&limit=1000`,
+      15000,
+    );
     const data = await res.json() as {
-      symbols: {
-        symbol: string;
-        status: string;
-        pricePrecision: number;
-        quantityPrecision: number;
-        filters: { filterType: string; tickSize?: string; stepSize?: string; minQty?: string; notional?: string; minNotional?: string }[];
-      }[];
+      retCode: number;
+      result: {
+        list: {
+          symbol: string;
+          status: string;
+          lotSizeFilter: { qtyStep: string; minOrderQty: string; maxOrderQty: string };
+          priceFilter: { tickSize: string };
+          leverageFilter: { maxLeverage: string };
+        }[];
+        nextPageCursor?: string;
+      };
     };
 
-    for (const sym of data.symbols) {
-      if (!sym.symbol.endsWith('USDT')) continue;
-      if (sym.status !== 'TRADING') continue;
+    const processPage = (list: typeof data.result.list) => {
+      for (const sym of list) {
+        if (!sym.symbol.endsWith('USDT')) continue;
+        if (sym.status !== 'Trading') continue;
 
-      const priceFilter = sym.filters.find(f => f.filterType === 'PRICE_FILTER');
-      const lotFilter = sym.filters.find(f => f.filterType === 'LOT_SIZE');
-      const minNotionalFilter = sym.filters.find(f => f.filterType === 'MIN_NOTIONAL' || f.filterType === 'NOTIONAL');
+        const tickSize = parseFloat(sym.priceFilter?.tickSize ?? '0.01');
+        const qtyStep = parseFloat(sym.lotSizeFilter?.qtyStep ?? '0.001');
+        const minOrderQty = parseFloat(sym.lotSizeFilter?.minOrderQty ?? '0.001');
+        const maxLeverage = parseFloat(sym.leverageFilter?.maxLeverage ?? '100');
+        const pricePrecision = calcPrecision(tickSize);
+        const qtyPrecision = calcPrecision(qtyStep);
 
-      const tickSize = parseFloat(priceFilter?.tickSize ?? '0.01');
-      const qtyStep = parseFloat(lotFilter?.stepSize ?? '0.001');
-      const minOrderQty = parseFloat(lotFilter?.minQty ?? '0.001');
-      const minNotionalValue = parseFloat(minNotionalFilter?.notional ?? minNotionalFilter?.minNotional ?? '5');
+        map.set(sym.symbol, {
+          symbol: sym.symbol,
+          tickSize,
+          qtyStep,
+          minOrderQty,
+          minNotionalValue: 1,
+          pricePrecision,
+          qtyPrecision,
+          maxLeverage,
+        });
+      }
+    };
 
-      map.set(sym.symbol, {
-        symbol: sym.symbol,
-        tickSize,
-        qtyStep,
-        minOrderQty,
-        minNotionalValue,
-        pricePrecision: sym.pricePrecision,
-        qtyPrecision: sym.quantityPrecision,
-        maxLeverage: 125, // 기본값
-      });
+    processPage(data.result.list);
+
+    // 페이지네이션 처리 (심볼 수가 많을 경우)
+    let cursor = data.result.nextPageCursor;
+    let pageCount = 0;
+    while (cursor && pageCount < 5) {
+      const nextRes = await fetchWithTimeout(
+        `${base}/v5/market/instruments-info?category=linear&limit=1000&cursor=${encodeURIComponent(cursor)}`,
+        15000,
+      );
+      const nextData = await nextRes.json() as typeof data;
+      processPage(nextData.result.list);
+      cursor = nextData.result.nextPageCursor;
+      pageCount++;
     }
   } catch (e) {
     console.warn('[loadAllSymbolMeta] 조회 실패:', e);
@@ -397,7 +411,7 @@ export async function loadAllSymbolMeta(isTestnet = false): Promise<Map<string, 
 
   _symbolMetaCache = map;
   _symbolMetaLoadedAt = Date.now();
-  console.log(`[SymbolMeta] ${map.size}개 심볼 캐시 완료`);
+  console.log(`[SymbolMeta] ${map.size}개 심볼 캐시 완료 (Bybit)`);
   return map;
 }
 
@@ -406,7 +420,6 @@ export async function getBinanceListedSymbols(isTestnet = false): Promise<Set<st
   return new Set(meta.keys());
 }
 
-// Bybit 호환 alias
 export async function getBybitListedSymbols(isTestnet = false): Promise<Set<string>> {
   return getBinanceListedSymbols(isTestnet);
 }
@@ -419,16 +432,15 @@ export async function isSymbolValid(symbol: string, isTestnet = false): Promise<
 export async function getSymbolMeta(symbol: string, isTestnet = false): Promise<SymbolMeta> {
   const cache = await loadAllSymbolMeta(isTestnet);
   if (cache.has(symbol)) return cache.get(symbol)!;
-
   return {
     symbol,
     tickSize: 0.01,
     qtyStep: 0.001,
     minOrderQty: 0.001,
-    minNotionalValue: 5,
+    minNotionalValue: 1,
     pricePrecision: 2,
     qtyPrecision: 3,
-    maxLeverage: 125,
+    maxLeverage: 100,
   };
 }
 
@@ -440,25 +452,43 @@ function roundToTickSize(price: number, tickSize: number, precision: number): st
   return rounded.toFixed(precision);
 }
 
-// ─── 잔고 조회 ────────────────────────────────────────────────────────────────
+// ─── 잔고 조회 (Bybit V5) ────────────────────────────────────────────────────
 
 export async function getBalance(creds: ApiCredentials): Promise<BalanceInfo> {
-  await syncServerTime(creds.isTestnet);
-
-  type AccountInfo = {
-    totalWalletBalance: string;
-    availableBalance: string;
-    totalMaintMargin: string;
-    totalInitialMargin: string;
-    totalUnrealizedProfit: string;
+  type BybitWallet = {
+    list: {
+      accountType: string;
+      totalWalletBalance: string;
+      totalAvailableBalance: string;
+      totalMaintenanceMargin: string;
+      totalInitialMargin: string;
+    }[];
   };
 
-  const data = await binanceRequest(creds, 'GET', '/fapi/v2/account') as AccountInfo;
+  const data = await bybitRequest(creds, 'GET', '/v5/account/wallet-balance', {
+    accountType: 'UNIFIED',
+  }) as BybitWallet;
 
-  const totalBalance = safeFloat(data.totalWalletBalance);
-  const availableBalance = safeFloat(data.availableBalance);
-  const totalMM = safeFloat(data.totalMaintMargin);
-  const totalIM = safeFloat(data.totalInitialMargin);
+  const account = data.list?.[0];
+  if (!account) {
+    // CONTRACT 계정 타입 시도
+    const data2 = await bybitRequest(creds, 'GET', '/v5/account/wallet-balance', {
+      accountType: 'CONTRACT',
+    }) as BybitWallet;
+    const account2 = data2.list?.[0];
+    if (!account2) throw new Error('잔고 조회 실패');
+    const totalBalance = safeFloat(account2.totalWalletBalance);
+    const availableBalance = safeFloat(account2.totalAvailableBalance);
+    const totalMM = safeFloat(account2.totalMaintenanceMargin);
+    const totalIM = safeFloat(account2.totalInitialMargin);
+    const mmrPct = totalIM > 0 ? (totalMM / totalIM) * 100 : 0;
+    return { totalBalance, availableBalance, mmrPct: Math.min(mmrPct, 100), totalMaintenanceMargin: totalMM, totalInitialMargin: totalIM };
+  }
+
+  const totalBalance = safeFloat(account.totalWalletBalance);
+  const availableBalance = safeFloat(account.totalAvailableBalance);
+  const totalMM = safeFloat(account.totalMaintenanceMargin);
+  const totalIM = safeFloat(account.totalInitialMargin);
   const mmrPct = totalIM > 0 ? (totalMM / totalIM) * 100 : 0;
 
   return {
@@ -470,56 +500,65 @@ export async function getBalance(creds: ApiCredentials): Promise<BalanceInfo> {
   };
 }
 
-// ─── 포지션 조회 ──────────────────────────────────────────────────────────────
+// ─── 포지션 조회 (Bybit V5) ──────────────────────────────────────────────────
 
-type BinancePosition = {
+type BybitPosition = {
   symbol: string;
-  positionSide: string;
-  positionAmt: string;
-  entryPrice: string;
-  unrealizedProfit: string;
+  side: string;
+  size: string;
+  avgPrice: string;
+  unrealisedPnl: string;
   leverage: string;
-  notional: string;
+  positionValue: string;
   markPrice: string;
-  liquidationPrice: string;
+  liqPrice: string;
 };
 
-function mapPosition(p: BinancePosition): PositionInfo {
-  const amt = parseFloat(p.positionAmt);
+function mapBybitPosition(p: BybitPosition): PositionInfo {
   return {
     symbol: p.symbol,
-    side: amt >= 0 ? 'Buy' : 'Sell',
-    size: Math.abs(amt).toString(),
-    entryPrice: p.entryPrice,
-    avgPrice: p.entryPrice,
-    unrealisedPnl: p.unrealizedProfit,
+    side: p.side === 'Buy' ? 'Buy' : 'Sell',
+    size: p.size,
+    entryPrice: p.avgPrice,
+    avgPrice: p.avgPrice,
+    unrealisedPnl: p.unrealisedPnl,
     leverage: p.leverage,
-    positionValue: p.notional,
+    positionValue: p.positionValue,
     markPrice: p.markPrice,
-    liqPrice: p.liquidationPrice,
+    liqPrice: p.liqPrice,
   };
 }
 
 export async function getPositions(creds: ApiCredentials): Promise<PositionInfo[]> {
-  const data = await binanceRequest(creds, 'GET', '/fapi/v2/positionRisk') as BinancePosition[];
-  return (data ?? [])
-    .filter(p => parseFloat(p.positionAmt) !== 0)
-    .map(mapPosition);
+  type BybitPositionResult = { list: BybitPosition[] };
+  const data = await bybitRequest(creds, 'GET', '/v5/position/list', {
+    category: 'linear',
+    settleCoin: 'USDT',
+  }) as BybitPositionResult;
+
+  return (data.list ?? [])
+    .filter(p => safeFloat(p.size) !== 0)
+    .map(mapBybitPosition);
 }
 
 export async function getPositionBySymbol(
   creds: ApiCredentials,
   symbol: string,
 ): Promise<PositionInfo | null> {
-  const data = await binanceRequest(creds, 'GET', '/fapi/v2/positionRisk', { symbol }) as BinancePosition[];
-  const pos = (data ?? []).find(p => parseFloat(p.positionAmt) !== 0);
-  return pos ? mapPosition(pos) : null;
+  type BybitPositionResult = { list: BybitPosition[] };
+  const data = await bybitRequest(creds, 'GET', '/v5/position/list', {
+    category: 'linear',
+    symbol,
+  }) as BybitPositionResult;
+
+  const pos = (data.list ?? []).find(p => safeFloat(p.size) !== 0);
+  return pos ? mapBybitPosition(pos) : null;
 }
 
-// ─── 포지션 모드 감지 ─────────────────────────────────────────────────────────
+// ─── 포지션 모드 감지 (Bybit는 단방향/헤지 모드 지원) ────────────────────────
 
 let _positionModeDetected = false;
-let _isDualSidePosition = false; // false = 단방향, true = 헤지
+let _isDualSidePosition = false;
 let _detectingPromise: Promise<void> | null = null;
 let _positionModeLastDetected = 0;
 const POSITION_MODE_TTL = 5 * 60 * 1000;
@@ -545,8 +584,13 @@ export async function detectPositionMode(creds: ApiCredentials): Promise<void> {
 
   _detectingPromise = (async () => {
     try {
-      const data = await binanceRequest(creds, 'GET', '/fapi/v1/positionSide/dual') as { dualSidePosition: boolean };
-      _isDualSidePosition = data.dualSidePosition;
+      // Bybit: 포지션 모드 조회
+      type ModeResult = { mode: number };
+      const data = await bybitRequest(creds, 'GET', '/v5/position/switch-mode', {
+        category: 'linear',
+      }) as ModeResult;
+      // mode: 0 = 단방향, 3 = 헤지
+      _isDualSidePosition = data.mode === 3;
       _positionModeDetected = true;
       _positionModeLastDetected = Date.now();
     } catch {
@@ -561,38 +605,42 @@ export async function detectPositionMode(creds: ApiCredentials): Promise<void> {
   return _detectingPromise;
 }
 
-// ─── Cross 마진 + 레버리지 설정 ──────────────────────────────────────────────
+// ─── Cross 마진 + 레버리지 설정 (Bybit V5) ───────────────────────────────────
 
 export async function setCrossMarginAndMaxLeverage(
   creds: ApiCredentials,
   symbol: string,
 ): Promise<number> {
   const meta = await getSymbolMeta(symbol, creds.isTestnet);
+  const targetLev = Math.min(meta.maxLeverage, creds.leverageMax || 20);
 
   // Cross 마진 모드 설정
   try {
-    await binanceRequest(creds, 'POST', '/fapi/v1/marginType', {
+    await bybitRequest(creds, 'POST', '/v5/position/switch-isolated', {
+      category: 'linear',
       symbol,
-      marginType: 'CROSSED',
+      tradeMode: 0, // 0 = Cross
+      buyLeverage: String(targetLev),
+      sellLeverage: String(targetLev),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    // -4046: No need to change margin type (이미 Cross)
-    if (!msg.includes('-4046') && !msg.includes('No need') && !msg.includes('정상')) {
+    if (!msg.includes('110026') && !msg.includes('정상') && !msg.includes('Cross')) {
       console.warn(`[Cross 전환 경고] ${symbol}: ${msg}`);
     }
   }
 
   // 레버리지 설정
-  const targetLev = Math.min(meta.maxLeverage, creds.leverageMax || 20);
   try {
-    await binanceRequest(creds, 'POST', '/fapi/v1/leverage', {
+    await bybitRequest(creds, 'POST', '/v5/position/set-leverage', {
+      category: 'linear',
       symbol,
-      leverage: String(targetLev),
+      buyLeverage: String(targetLev),
+      sellLeverage: String(targetLev),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (!msg.includes('-4028') && !msg.includes('정상')) {
+    if (!msg.includes('110043') && !msg.includes('정상')) {
       console.warn(`[레버리지 설정 경고] ${symbol}: ${msg}`);
     }
   }
@@ -600,27 +648,22 @@ export async function setCrossMarginAndMaxLeverage(
   return targetLev;
 }
 
-// ─── 전체 미체결 주문 취소 ────────────────────────────────────────────────────
+// ─── 전체 미체결 주문 취소 (Bybit V5) ────────────────────────────────────────
 
 export async function cancelAllOpenOrders(creds: ApiCredentials): Promise<number> {
   try {
-    // Binance: 심볼별로만 전체 취소 가능 → 포지션 있는 심볼 대상
-    const positions = await getPositions(creds);
-    let count = 0;
-    for (const pos of positions) {
-      try {
-        await binanceRequest(creds, 'DELETE', '/fapi/v1/allOpenOrders', { symbol: pos.symbol });
-        count++;
-      } catch { /* 개별 실패 무시 */ }
-    }
-    return count;
+    await bybitRequest(creds, 'POST', '/v5/order/cancel-all', {
+      category: 'linear',
+      settleCoin: 'USDT',
+    });
+    return 1;
   } catch (e) {
     console.warn('[cancelAllOpenOrders] 실패:', e);
     return 0;
   }
 }
 
-// ─── 시장가 주문 실행 ─────────────────────────────────────────────────────────
+// ─── 시장가 주문 실행 (Bybit V5) ─────────────────────────────────────────────
 
 export async function placeOrder(
   creds: ApiCredentials,
@@ -628,8 +671,8 @@ export async function placeOrder(
   side: 'Buy' | 'Sell',
   qty: string,
   leverage: number,
-  _stopLoss?: string,   // 사용안함 - 앱 내부에서 손절 관리
-  _takeProfit?: string, // 사용안함 - 앱 내부에서 익절 관리
+  _stopLoss?: string,
+  _takeProfit?: string,
 ): Promise<OrderResult> {
   if (!_positionModeDetected) {
     await detectPositionMode(creds);
@@ -637,78 +680,92 @@ export async function placeOrder(
 
   await setCrossMarginAndMaxLeverage(creds, symbol);
 
-  const binanceSide = side === 'Buy' ? 'BUY' : 'SELL';
   const orderParams: Record<string, unknown> = {
+    category: 'linear',
     symbol,
-    side: binanceSide,
-    type: 'MARKET',
-    quantity: qty,
+    side,
+    orderType: 'Market',
+    qty,
+    timeInForce: 'IOC',
   };
 
   if (_isDualSidePosition) {
-    orderParams.positionSide = side === 'Buy' ? 'LONG' : 'SHORT';
+    orderParams.positionIdx = side === 'Buy' ? 1 : 2;
+  } else {
+    orderParams.positionIdx = 0;
   }
 
-  const result = await binanceRequest(creds, 'POST', '/fapi/v1/order', orderParams) as { orderId: number; symbol: string; side: string };
+  const result = await bybitRequest(creds, 'POST', '/v5/order/create', orderParams) as {
+    orderId: string;
+    symbol: string;
+    side: string;
+  };
+
   return {
-    orderId: String(result.orderId),
-    symbol: result.symbol,
-    side: result.side,
+    orderId: result.orderId,
+    symbol: result.symbol ?? symbol,
+    side: result.side ?? side,
   };
 }
 
-// ─── 미체결 주문 조회 ─────────────────────────────────────────────────────────
+// ─── 미체결 주문 조회 (Bybit V5) ─────────────────────────────────────────────
 
 export async function getOpenOrders(
   creds: ApiCredentials,
   symbol: string,
 ): Promise<{ orderId: string; orderStatus: string; price: string; side: string }[]> {
-  const data = await binanceRequest(creds, 'GET', '/fapi/v1/openOrders', { symbol }) as {
-    orderId: number; status: string; price: string; side: string;
-  }[];
-  return (data ?? []).map(o => ({
-    orderId: String(o.orderId),
-    orderStatus: o.status,
+  type BybitOrder = { orderId: string; orderStatus: string; price: string; side: string };
+  const data = await bybitRequest(creds, 'GET', '/v5/order/realtime', {
+    category: 'linear',
+    symbol,
+  }) as { list: BybitOrder[] };
+
+  return (data.list ?? []).map(o => ({
+    orderId: o.orderId,
+    orderStatus: o.orderStatus,
     price: o.price,
     side: o.side,
   }));
 }
 
-// ─── 주문 취소 ────────────────────────────────────────────────────────────────
+// ─── 주문 취소 (Bybit V5) ─────────────────────────────────────────────────────
 
 export async function cancelOrder(
   creds: ApiCredentials,
   symbol: string,
   orderId: string,
 ): Promise<void> {
-  await binanceRequest(creds, 'DELETE', '/fapi/v1/order', { symbol, orderId });
+  await bybitRequest(creds, 'POST', '/v5/order/cancel', {
+    category: 'linear',
+    symbol,
+    orderId,
+  });
 }
 
-// ─── 추가매수 ─────────────────────────────────────────────────────────────────
+// ─── 추가매수 (Bybit V5) ──────────────────────────────────────────────────────
 
 export async function addToPosition(
   creds: ApiCredentials,
   symbol: string,
   side: 'Buy' | 'Sell',
   qty: string,
-  _newStopLoss?: string, // 사용안함 - 앱 내부에서 손절 관리
+  _newStopLoss?: string,
 ): Promise<void> {
   if (!_positionModeDetected) await detectPositionMode(creds);
 
-  const binanceSide = side === 'Buy' ? 'BUY' : 'SELL';
   const orderParams: Record<string, unknown> = {
+    category: 'linear',
     symbol,
-    side: binanceSide,
-    type: 'MARKET',
-    quantity: qty,
+    side,
+    orderType: 'Market',
+    qty,
+    timeInForce: 'IOC',
+    positionIdx: _isDualSidePosition ? (side === 'Buy' ? 1 : 2) : 0,
   };
-  if (_isDualSidePosition) {
-    orderParams.positionSide = side === 'Buy' ? 'LONG' : 'SHORT';
-  }
-  await binanceRequest(creds, 'POST', '/fapi/v1/order', orderParams);
+  await bybitRequest(creds, 'POST', '/v5/order/create', orderParams);
 }
 
-// ─── 포지션 청산 (체결 확인 포함) ────────────────────────────────────────────
+// ─── 포지션 청산 (Bybit V5) ───────────────────────────────────────────────────
 
 export async function closePosition(
   creds: ApiCredentials,
@@ -716,21 +773,20 @@ export async function closePosition(
   side: 'Buy' | 'Sell',
   size: string,
 ): Promise<void> {
-  const closeSide = side === 'Buy' ? 'SELL' : 'BUY';
+  const closeSide = side === 'Buy' ? 'Sell' : 'Buy';
   const orderParams: Record<string, unknown> = {
+    category: 'linear',
     symbol,
     side: closeSide,
-    type: 'MARKET',
-    quantity: size,
-    reduceOnly: 'true',
+    orderType: 'Market',
+    qty: size,
+    timeInForce: 'IOC',
+    reduceOnly: true,
+    positionIdx: _isDualSidePosition ? (side === 'Buy' ? 1 : 2) : 0,
   };
-  if (_isDualSidePosition) {
-    delete orderParams.reduceOnly;
-    orderParams.positionSide = side === 'Buy' ? 'LONG' : 'SHORT';
-  }
-  await binanceRequest(creds, 'POST', '/fapi/v1/order', orderParams);
+  await bybitRequest(creds, 'POST', '/v5/order/create', orderParams);
 
-  // 포지션 소멸 확인 (최대 15초, 500ms 간격 폴링)
+  // 포지션 소멸 확인 (최대 15초)
   const maxWait = 15000;
   const interval = 500;
   const deadline = Date.now() + maxWait;
@@ -739,14 +795,12 @@ export async function closePosition(
     try {
       const pos = await getPositionBySymbol(creds, symbol);
       if (!pos || safeFloat(pos.size) === 0) return;
-    } catch {
-      // 조회 실패 시 계속 대기
-    }
+    } catch { /* 조회 실패 시 계속 대기 */ }
   }
   console.warn(`[closePosition] ${symbol} 청산 확인 타임아웃 (15s) — 계속 진행`);
 }
 
-// ─── 부분 청산 ────────────────────────────────────────────────────────────────
+// ─── 부분 청산 (Bybit V5) ─────────────────────────────────────────────────────
 
 export async function closePartialPosition(
   creds: ApiCredentials,
@@ -754,19 +808,17 @@ export async function closePartialPosition(
   side: 'Buy' | 'Sell',
   partialQty: string,
 ): Promise<void> {
-  const closeSide = side === 'Buy' ? 'SELL' : 'BUY';
-  const orderParams: Record<string, unknown> = {
+  const closeSide = side === 'Buy' ? 'Sell' : 'Buy';
+  await bybitRequest(creds, 'POST', '/v5/order/create', {
+    category: 'linear',
     symbol,
     side: closeSide,
-    type: 'MARKET',
-    quantity: partialQty,
-    reduceOnly: 'true',
-  };
-  if (_isDualSidePosition) {
-    delete orderParams.reduceOnly;
-    orderParams.positionSide = side === 'Buy' ? 'LONG' : 'SHORT';
-  }
-  await binanceRequest(creds, 'POST', '/fapi/v1/order', orderParams);
+    orderType: 'Market',
+    qty: partialQty,
+    timeInForce: 'IOC',
+    reduceOnly: true,
+    positionIdx: _isDualSidePosition ? (side === 'Buy' ? 1 : 2) : 0,
+  });
   await new Promise(r => setTimeout(r, 500));
 }
 
@@ -784,25 +836,20 @@ export async function updateTakeProfit(
 // ─── 수량 계산 (가용잔고 3% 미만) ────────────────────────────────────────────
 
 export function calcQty(
-  availableBalance: number,  // 가용잔고
-  positionSizePct: number,   // 가용잔고 대비 % (기본 3)
+  availableBalance: number,
+  positionSizePct: number,
   price: number,
   leverage: number,
   minQty: number,
   qtyStep: number,
   qtyPrecision: number,
 ): string | null {
-  // 1개 단위 거래 규칙
   const maxBudget = (availableBalance * Math.min(positionSizePct, 3)) / 100;
   const oneUnitCost = price * minQty;
-  if (oneUnitCost > maxBudget * leverage) {
-    return null;
-  }
+  if (oneUnitCost > maxBudget * leverage) return null;
 
   const usdt = maxBudget;
   const raw = (usdt * leverage) / Math.max(price, 0.000001);
-
-  // 수량을 1개 단위(정수 * qtyStep)로 강제
   const steps = Math.floor(raw / qtyStep);
   if (steps < 1) return null;
 
@@ -835,3 +882,6 @@ export async function getSymbolLotFilter(
     minNotionalValue: meta.minNotionalValue,
   };
 }
+
+// Bybit 호환 alias (하위 호환)
+export const bybitRequestAlias = bybitRequest;
