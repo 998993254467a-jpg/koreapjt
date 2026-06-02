@@ -61,11 +61,13 @@ jobs:
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon \
-            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m"
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=512m" \
+            -PbundleInRelease=false \
+            -Preact.bundleInDebug=false
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: jtpower-binance-release
+          name: jtpower-bybit-release
           path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7
