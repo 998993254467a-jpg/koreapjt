@@ -12,10 +12,9 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Platform,
   Linking,
 } from 'react-native';
-import * as WebBrowser from 'expo-web-browser';
+// expo-web-browser 제거 - Linking으로 대체
 
 const C = {
   bg: '#0D1117',
@@ -77,17 +76,7 @@ export function ChartModal({ visible, symbol, displaySymbol, side, onClose }: Ch
     setLoading(true);
     try {
       const url = buildChartUrl(symbol, interval);
-      if (Platform.OS === 'web') {
-        // 웹에서는 새 탭으로 열기
-        Linking.openURL(url);
-      } else {
-        await WebBrowser.openBrowserAsync(url, {
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-          toolbarColor: C.bg,
-          controlsColor: C.teal,
-          showTitle: true,
-        });
-      }
+      Linking.openURL(url);
     } catch {
       // 오류 시 기본 브라우저로 폴백
       const url = buildChartUrl(symbol, interval);
@@ -102,16 +91,7 @@ export function ChartModal({ visible, symbol, displaySymbol, side, onClose }: Ch
     try {
       const base = symbol.replace(/USDT$/, '').replace(/PERP$/, '');
       const url = `https://www.bybit.com/trade/usdt/${base}USDT`;
-      if (Platform.OS === 'web') {
-        Linking.openURL(url);
-      } else {
-        await WebBrowser.openBrowserAsync(url, {
-          presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
-          toolbarColor: C.bg,
-          controlsColor: C.teal,
-          showTitle: true,
-        });
-      }
+      Linking.openURL(url);
     } catch {
       const base = symbol.replace(/USDT$/, '').replace(/PERP$/, '');
       Linking.openURL(`https://www.bybit.com/trade/usdt/${base}USDT`);

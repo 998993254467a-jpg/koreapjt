@@ -15,7 +15,7 @@ import {
   Platform,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
+
 import { ScreenContainer } from '@/components/screen-container';
 import {
   loadTradeHistory,
@@ -98,15 +98,8 @@ async function shareReport(content: string, filename: string): Promise<void> {
     await FileSystem.writeAsStringAsync(fileUri, content, {
       encoding: FileSystem.EncodingType.UTF8,
     });
-    const available = await Sharing.isAvailableAsync();
-    if (!available) {
-      Alert.alert('공유 불가', '이 기기에서는 파일 공유가 지원되지 않습니다.');
-      return;
-    }
-    await Sharing.shareAsync(fileUri, {
-      mimeType: 'text/plain',
-      dialogTitle: `${filename} 저장/공유`,
-    });
+    // expo-sharing 제거 - 파일 저장 완료 안내만 표시
+    Alert.alert('저장 완료', `${filename} 파일이 저장되었습니다.\n\uacbd로: ${fileUri}`);
   } catch (e) {
     Alert.alert('오류', `보고서 생성 실패: ${e instanceof Error ? e.message : String(e)}`);
   }

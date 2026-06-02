@@ -11,7 +11,7 @@ import {
   AppStateStatus,
   Platform,
 } from 'react-native';
-import { useKeepAwake } from 'expo-keep-awake';
+
 import { ScreenContainer } from '@/components/screen-container';
 import { ChartModal } from '@/components/chart-modal';
 import { trpc } from '@/lib/trpc';
@@ -521,7 +521,7 @@ export default function BotScreen() {
   const excludeList = excludeListData ?? [];
 
   const isAnyBotRunning = state.normalRunning || state.surgeRunning || state.presurgeRunning || state.running;
-  useKeepAwake(isAnyBotRunning ? 'bot-running' : 'bot-idle');
+
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
