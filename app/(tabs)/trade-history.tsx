@@ -14,7 +14,7 @@ import {
   Alert,
   Platform,
 } from 'react-native';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 
 import { ScreenContainer } from '@/components/screen-container';
 import {
