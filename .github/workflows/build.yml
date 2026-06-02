@@ -33,10 +33,13 @@ jobs:
           EXPO_ROUTER_DISABLE_RN_NAVIGATION_CHECK: '1'
         run: |
           npx expo prebuild --platform android --clean --no-install
-      - name: Set version in build.gradle
+      - name: Set version from app.json
         run: |
-          sed -i 's/versionCode 1$/versionCode 10055/' android/app/build.gradle
-          sed -i 's/versionName "1.0"$/versionName "1.0.55"/' android/app/build.gradle
+          VERSION_CODE=$(node -e "const a=require('./app.json'); console.log(a.expo.android.versionCode)")
+          VERSION_NAME=$(node -e "const a=require('./app.json'); console.log(a.expo.version)")
+          echo "versionCode=$VERSION_CODE, versionName=$VERSION_NAME"
+          sed -i "s/versionCode [0-9]*/versionCode $VERSION_CODE/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"$VERSION_NAME\"/" android/app/build.gradle
           grep -n "versionCode\|versionName" android/app/build.gradle | head -5
       - name: Cache Gradle
         uses: actions/cache@v4
