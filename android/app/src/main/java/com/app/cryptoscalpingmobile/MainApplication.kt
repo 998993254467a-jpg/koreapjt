@@ -1,4 +1,4 @@
-package com.jtpower
+package com.app.cryptoscalpingmobile
 
 import android.app.Application
 import android.content.res.Configuration

@@ -2,7 +2,7 @@
   "expo": {
     "name": "JT POWER",
     "slug": "crypto-scalping-mobile",
-    "version": "1.0.48",
+    "version": "1.0.49",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "manuscryptoscalpingmobile",
@@ -13,7 +13,10 @@
       "bundleIdentifier": "com.app.cryptoscalpingmobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UIBackgroundModes": ["processing", "fetch"]
+        "UIBackgroundModes": [
+          "processing",
+          "fetch"
+        ]
       }
     },
     "android": {
@@ -37,8 +40,16 @@
         {
           "action": "VIEW",
           "autoVerify": true,
-          "data": [{"scheme": "manuscryptoscalpingmobile", "host": "*"}],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "data": [
+            {
+              "scheme": "manuscryptoscalpingmobile",
+              "host": "*"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -50,21 +61,43 @@
     "plugins": [
       "expo-router",
       "expo-background-task",
-      ["expo-audio", {"microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone."}],
-      ["expo-video", {"supportsBackgroundPlayback": true, "supportsPictureInPicture": true}],
-      ["expo-splash-screen", {
-        "image": "./assets/images/splash-icon.png",
-        "imageWidth": 200,
-        "resizeMode": "contain",
-        "backgroundColor": "#ffffff",
-        "dark": {"backgroundColor": "#000000"}
-      }],
-      ["expo-build-properties", {
-        "android": {
-          "buildArchs": ["armeabi-v7a", "arm64-v8a"],
-          "minSdkVersion": 24
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone."
         }
-      }]
+      ],
+      [
+        "expo-video",
+        {
+          "supportsBackgroundPlayback": true,
+          "supportsPictureInPicture": true
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff",
+          "dark": {
+            "backgroundColor": "#000000"
+          }
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "buildArchs": [
+              "armeabi-v7a",
+              "arm64-v8a"
+            ],
+            "minSdkVersion": 24
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

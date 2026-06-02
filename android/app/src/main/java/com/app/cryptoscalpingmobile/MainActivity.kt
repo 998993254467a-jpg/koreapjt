@@ -1,4 +1,4 @@
-package com.jtpower
+package com.app.cryptoscalpingmobile
 
 import android.os.Build
 import android.os.Bundle
