@@ -16,17 +16,9 @@ module.exports = function (api) {
     ],
     overrides: [
       {
-        // @tanstack/query-core v5는 private class fields를 사용
-        // Hermes (RN 0.81.5)가 지원하지 않으므로 transpile
-        test: /node_modules\/@tanstack/,
-        plugins: [
-          ['@babel/plugin-transform-class-properties', { loose: true }],
-          ['@babel/plugin-transform-private-methods', { loose: true }],
-        ],
-      },
-      {
-        // jose v6도 private fields 사용
-        test: /node_modules\/jose/,
+        // 모든 node_modules의 private class fields를 transpile
+        // Hermes (RN 0.81.5)가 private fields를 지원하지 않음
+        test: /node_modules/,
         plugins: [
           ['@babel/plugin-transform-class-properties', { loose: true }],
           ['@babel/plugin-transform-private-methods', { loose: true }],
