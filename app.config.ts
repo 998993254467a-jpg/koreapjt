@@ -41,12 +41,12 @@ const env = {
 const config: ExpoConfig = {
   name: env.appName,
   slug: env.appSlug,
-  version: "1.0.50",
+  version: "1.0.52",
   orientation: "portrait",
   icon: "./assets/images/icon.png",
   scheme: env.scheme,
   userInterfaceStyle: "automatic",
-  newArchEnabled: false,
+  newArchEnabled: true,
   ios: {
     supportsTablet: true,
     bundleIdentifier: env.iosBundleId,
@@ -87,6 +87,20 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-router",
+    "expo-background-task",
+    [
+      "expo-audio",
+      {
+        microphonePermission: "Allow $(PRODUCT_NAME) to access your microphone.",
+      },
+    ],
+    [
+      "expo-video",
+      {
+        supportsBackgroundPlayback: true,
+        supportsPictureInPicture: true,
+      },
+    ],
     [
       "expo-splash-screen",
       {
@@ -105,14 +119,13 @@ const config: ExpoConfig = {
         android: {
           buildArchs: ["armeabi-v7a", "arm64-v8a"],
           minSdkVersion: 24,
-          newArchEnabled: false,
         },
       },
     ],
   ],
   experiments: {
     typedRoutes: true,
-    reactCompiler: false,
+    reactCompiler: true,
   },
   extra: {
     serverUrl: process.env.EXPO_PUBLIC_SERVER_URL || 'https://jtpowerbot-jgpei7xw.manus.space',

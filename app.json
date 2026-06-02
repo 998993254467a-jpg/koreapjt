@@ -2,12 +2,12 @@
   "expo": {
     "name": "JT POWER",
     "slug": "crypto-scalping-mobile",
-    "version": "1.0.51",
+    "version": "1.0.52",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "manuscryptoscalpingmobile",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.app.cryptoscalpingmobile",
@@ -48,7 +48,7 @@
           ]
         }
       ],
-      "versionCode": 10051
+      "versionCode": 10052
     },
     "web": {
       "bundler": "metro",
@@ -89,6 +89,7 @@
     "extra": {
       "serverUrl": "https://jtpowerbot-jgpei7xw.manus.space",
       "router": {}
-    }
+    },
+    "sdkVersion": "54.0.0"
   }
 }
